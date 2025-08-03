@@ -7,6 +7,7 @@ import com.example.inker.booking.dto.BookingResponse
 import com.example.inker.booking.entity.Booking
 import com.example.inker.booking.entity.BookingStatus
 import com.example.inker.booking.exception.BookingNotFoundException
+import com.example.inker.booking.repository.BookingRepository
 import org.springframework.stereotype.Service
 import java.time.LocalDateTime
 
@@ -14,31 +15,31 @@ import java.time.LocalDateTime
  * 예약 서비스
  */
 @Service
-class BookingService {
-    
-    // 임시 저장소 (실제로는 Repository를 사용해야 함)
-    private val bookings = mutableMapOf<Long, Booking>()
+class BookingService(
+    private val bookingRepository: BookingRepository
+) {
     private var nextId = 1L
     
     /**
      * 모든 예약 조회
      */
     fun getAllBookings(): List<BookingResponse> {
-        return bookings.values.map { BookingResponse.from(it) }
+        return bookingRepository.findAll().map { BookingResponse.from(it) }
     }
     
     /**
      * ID로 예약 조회
      */
     fun getBookingById(id: Long): BookingResponse? {
-        return bookings[id]?.let { BookingResponse.from(it) } ?: throw BookingNotFoundException()
+        val booking = bookingRepository.findById(id).orElseThrow { BookingNotFoundException() }
+        return BookingResponse.from(booking)
     }
     
     /**
      * 사용자 ID로 예약 조회
      */
     fun getBookingsByUserId(userId: Long): List<BookingResponse> {
-        return bookings.values
+        return bookingRepository.findAll()
             .filter { it.userId == userId }
             .map { BookingResponse.from(it) }
     }
@@ -55,8 +56,8 @@ class BookingService {
             durationMinutes = request.durationMinutes,
             notes = request.notes
         )
-        
-        bookings[nextId] = booking
+
+        bookingRepository.save(booking)
         nextId++
         
         return BookingResponse.from(booking)
@@ -66,7 +67,7 @@ class BookingService {
      * 예약 수정
      */
     fun updateBooking(id: Long, request: UpdateBookingRequest): BookingResponse {
-        val existingBooking = bookings[id] ?: throw BookingNotFoundException()
+        val existingBooking = bookingRepository.findById(id).orElseThrow { BookingNotFoundException() }
         
         val updatedBooking = existingBooking.copy(
             serviceName = request.serviceName ?: existingBooking.serviceName,
@@ -76,8 +77,8 @@ class BookingService {
             status = request.status ?: existingBooking.status,
             updatedAt = LocalDateTime.now()
         )
-        
-        bookings[id] = updatedBooking
+
+        bookingRepository.save(updatedBooking)
         return BookingResponse.from(updatedBooking)
     }
     
@@ -85,14 +86,14 @@ class BookingService {
      * 예약 상태 변경
      */
     fun updateBookingStatus(id: Long, request: UpdateBookingStatusRequest): BookingResponse {
-        val existingBooking = bookings[id] ?: throw BookingNotFoundException()
+        val existingBooking = bookingRepository.findById(id).orElseThrow { BookingNotFoundException() }
         
         val updatedBooking = existingBooking.copy(
             status = request.status,
             updatedAt = LocalDateTime.now()
         )
-        
-        bookings[id] = updatedBooking
+
+        bookingRepository.save(updatedBooking)
         return BookingResponse.from(updatedBooking)
     }
     
@@ -100,7 +101,7 @@ class BookingService {
      * 예약 삭제
      */
     fun deleteBooking(id: Long): Boolean {
-        return bookings.remove(id)?.let { true } ?: throw BookingNotFoundException()
+        return bookingRepository.delete(id)?.let { true } ?: throw BookingNotFoundException()
     }
     
     /**

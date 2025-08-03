@@ -1,9 +1,9 @@
 package com.example.inker.stock.controller;
 
 import com.example.inker.stock.dto.CreateStockRequest;
-import com.example.inker.stock.dto.UpdateStockRequest;
-import com.example.inker.stock.dto.UpdateStockPriceRequest;
 import com.example.inker.stock.dto.StockResponse;
+import com.example.inker.stock.dto.UpdateStockPriceRequest;
+import com.example.inker.stock.dto.UpdateStockRequest;
 import com.example.inker.stock.service.StockService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;

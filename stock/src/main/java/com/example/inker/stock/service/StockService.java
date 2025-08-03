@@ -5,6 +5,9 @@ import com.example.inker.stock.dto.UpdateStockRequest;
 import com.example.inker.stock.dto.UpdateStockPriceRequest;
 import com.example.inker.stock.dto.StockResponse;
 import com.example.inker.stock.entity.Stock;
+import com.example.inker.stock.exception.StockNotFoundException;
+import com.example.inker.stock.exception.InvalidPriceException;
+import com.example.inker.stock.exception.StockValidationException;
 import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -12,7 +15,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
- * 주식 관련 서비스
+ * 재고 관련 서비스
  */
 @Service
 public class StockService {
@@ -21,8 +24,13 @@ public class StockService {
     private final Map<Long, Stock> stocks = new ConcurrentHashMap<>();
     private long nextId = 1;
     
+    // 깊은 분석 클래스들
+    private final StockAnalysisOrchestrator orchestrator = new StockAnalysisOrchestrator();
+    private final StockDataProcessor dataProcessor = new StockDataProcessor();
+    private final StockPriceAnalyzer priceAnalyzer = new StockPriceAnalyzer();
+
     /**
-     * 모든 주식 조회
+     * 모든 재고 조회
      */
     public List<StockResponse> getAllStocks() {
         return stocks.values().stream()
@@ -31,26 +39,32 @@ public class StockService {
     }
     
     /**
-     * ID로 주식 조회
+     * ID로 재고 조회
      */
     public StockResponse getStockById(Long id) {
         Stock stock = stocks.get(id);
-        return stock != null ? StockResponse.from(stock) : null;
+        if (stock == null) {
+            throw new StockNotFoundException("ID " + id + "에 해당하는 재고를 찾을 수 없습니다");
+        }
+        return StockResponse.from(stock);
     }
     
     /**
-     * 심볼로 주식 조회
+     * 심볼로 재고 조회
      */
     public StockResponse getStockBySymbol(String symbol) {
         Stock stock = stocks.values().stream()
                 .filter(s -> s.getSymbol().equals(symbol))
                 .findFirst()
                 .orElse(null);
-        return stock != null ? StockResponse.from(stock) : null;
+        if (stock == null) {
+            throw new StockNotFoundException("심볼 " + symbol + "에 해당하는 재고를 찾을 수 없습니다");
+        }
+        return StockResponse.from(stock);
     }
     
     /**
-     * 섹터별 주식 조회
+     * 섹터별 재고 조회
      */
     public List<StockResponse> getStocksBySector(String sector) {
         return stocks.values().stream()
@@ -60,9 +74,10 @@ public class StockService {
     }
     
     /**
-     * 주식 생성
+     * 재고 생성
      */
     public StockResponse createStock(CreateStockRequest request) {
+        // 깊은 데이터 검증
         Stock stock = new Stock(
             request.getSymbol(),
             request.getCompanyName(),
@@ -73,6 +88,9 @@ public class StockService {
             request.getSector()
         );
         
+        // 데이터 검증 수행
+        dataProcessor.validateStockData(stock);
+        
         stock.setId(nextId++);
         stock.setCreatedAt(LocalDateTime.now());
         
@@ -81,12 +99,12 @@ public class StockService {
     }
     
     /**
-     * 주식 수정
+     * 재고 수정
      */
     public StockResponse updateStock(Long id, UpdateStockRequest request) {
         Stock stock = stocks.get(id);
         if (stock == null) {
-            return null;
+            throw new StockNotFoundException("ID " + id + "에 해당하는 재고를 찾을 수 없습니다");
         }
         
         if (request.getSymbol() != null) {
@@ -110,72 +128,64 @@ public class StockService {
         if (request.getSector() != null) {
             stock.setSector(request.getSector());
         }
-        
         stock.setUpdatedAt(LocalDateTime.now());
-        stocks.put(id, stock);
-        
         return StockResponse.from(stock);
     }
     
     /**
-     * 주식 가격 업데이트
+     * 재고 가격 업데이트
      */
     public StockResponse updateStockPrice(Long id, UpdateStockPriceRequest request) {
         Stock stock = stocks.get(id);
         if (stock == null) {
-            return null;
+            throw new StockNotFoundException("ID " + id + "에 해당하는 재고를 찾을 수 없습니다");
         }
-        
-        stock.setPreviousPrice(stock.getCurrentPrice());
-        stock.setCurrentPrice(request.getCurrentPrice());
-        stock.setVolume(request.getVolume());
+        // 깊은 가격 분석 수행
+        priceAnalyzer.analyzePriceChange(stock.getCurrentPrice(), request.getNewPrice());
+        double oldPrice = stock.getCurrentPrice();
+        stock.setCurrentPrice(request.getNewPrice());
+        stock.setPreviousPrice(oldPrice);
         stock.setUpdatedAt(LocalDateTime.now());
-        
-        stocks.put(id, stock);
         return StockResponse.from(stock);
     }
     
     /**
-     * 주식 삭제
+     * 재고 삭제
      */
     public boolean deleteStock(Long id) {
         return stocks.remove(id) != null;
     }
     
     /**
-     * 주식 검색 (회사명 또는 심볼로 검색)
+     * 재고 검색 (회사명 또는 심볼로 검색)
      */
     public List<StockResponse> searchStocks(String keyword) {
-        String lowerKeyword = keyword.toLowerCase();
         return stocks.values().stream()
-                .filter(s -> s.getCompanyName().toLowerCase().contains(lowerKeyword) ||
-                           s.getSymbol().toLowerCase().contains(lowerKeyword))
+                .filter(s -> s.getCompanyName().contains(keyword) || s.getSymbol().contains(keyword))
                 .map(StockResponse::from)
                 .collect(Collectors.toList());
     }
     
     /**
-     * 가격 변동률이 높은 주식 조회 (상위 10개)
+     * 가격 변동률이 높은 재고 조회 (상위 10개)
      */
     public List<StockResponse> getTopGainers() {
         return stocks.values().stream()
-                .filter(s -> s.getPreviousPrice() > 0)
-                .sorted((s1, s2) -> {
-                    double change1 = (s1.getCurrentPrice() - s1.getPreviousPrice()) / s1.getPreviousPrice();
-                    double change2 = (s2.getCurrentPrice() - s2.getPreviousPrice()) / s2.getPreviousPrice();
-                    return Double.compare(change2, change1); // 내림차순
-                })
+                .sorted((a, b) -> Double.compare(
+                        (b.getCurrentPrice() - b.getPreviousPrice()) / b.getPreviousPrice(),
+                        (a.getCurrentPrice() - a.getPreviousPrice()) / a.getPreviousPrice()
+                ))
                 .limit(10)
                 .map(StockResponse::from)
                 .collect(Collectors.toList());
     }
     
     /**
-     * 시가총액 기준 상위 주식 조회
+     * 시가총액 기준 상위 재고 조회
      */
     public List<StockResponse> getTopByMarketCap() {
         return stocks.values().stream()
-                .sorted((s1, s2) -> Double.compare(s2.getMarketCap(), s1.getMarketCap()))
+                .sorted((a, b) -> Long.compare(b.getMarketCap(), a.getMarketCap()))
                 .limit(10)
                 .map(StockResponse::from)
                 .collect(Collectors.toList());

@@ -78,6 +78,8 @@ val analysisConfig = mapOf(
 
 // Controller 분석기 클래스
 class ControllerAnalyzer {
+    private val analyzedExceptions = mutableSetOf<String>()
+    
     fun analyze() {
         println("🔍 Controller 분석을 시작합니다...")
         
@@ -156,6 +158,9 @@ class ControllerAnalyzer {
         var currentBasePath = ""
         var inClass = false
         
+        // Service 예외를 한 번만 분석
+        var serviceExceptions = emptyList<ExceptionInfo>()
+        
         for (line in lines) {
             val trimmedLine = line.trim()
             
@@ -172,15 +177,21 @@ class ControllerAnalyzer {
                 className = currentClass
                 inClass = true
                 println("🔍 Controller 클래스 발견: $className")
+                
+                // Service 예외 분석 (한 번만)
+                serviceExceptions = analyzeServiceExceptions(className, module)
             }
             
-            // Java 클래스도 찾기
-            if (trimmedLine.startsWith("public class ") && trimmedLine.contains("Controller")) {
-                currentClass = trimmedLine.substringAfter("public class ").substringBefore("(").substringBefore(":")
-                className = currentClass
-                inClass = true
-                println("🔍 Java Controller 클래스 발견: $className")
-            }
+                                    // Java 클래스도 찾기
+                        if (trimmedLine.startsWith("public class ") && trimmedLine.contains("Controller")) {
+                            currentClass = trimmedLine.substringAfter("public class ").substringBefore("(").substringBefore(":").substringBefore(" {")
+                            className = currentClass
+                            inClass = true
+                            println("🔍 Java Controller 클래스 발견: $className")
+                            
+                            // Service 예외 분석 (한 번만)
+                            serviceExceptions = analyzeServiceExceptions(className, module)
+                        }
             
             // 디버깅: 모든 @RequestMapping 라인 확인
             if (trimmedLine.contains("@RequestMapping")) {
@@ -195,7 +206,7 @@ class ControllerAnalyzer {
                 trimmedLine.startsWith("@DeleteMapping") ||
                 trimmedLine.startsWith("@PatchMapping")) {
                 
-                val endpoint = parseEndpoint(trimmedLine, lines, currentBasePath, lines.indexOf(line))
+                val endpoint = parseEndpoint(trimmedLine, lines, currentBasePath, lines.indexOf(line), module, className, serviceExceptions)
                 if (endpoint != null) {
                     endpoints.add(endpoint)
                 }
@@ -216,7 +227,7 @@ class ControllerAnalyzer {
         return pathMatch?.groupValues?.get(1) ?: ""
     }
     
-    private fun parseEndpoint(annotationLine: String, lines: List<String>, basePath: String, annotationIndex: Int): EndpointInfo? {
+    private fun parseEndpoint(annotationLine: String, lines: List<String>, basePath: String, annotationIndex: Int, module: String, controllerName: String, serviceExceptions: List<ExceptionInfo>): EndpointInfo? {
         val method = when {
             annotationLine.startsWith("@GetMapping") -> "GET"
             annotationLine.startsWith("@PostMapping") -> "POST"
@@ -236,13 +247,22 @@ class ControllerAnalyzer {
         val requestDetails = analyzeRequestDetails(lines, annotationIndex)
         val responseDetails = analyzeResponseDetails(functionSignature.second)
         
+        // 함수 본문에서 예외 분석
+        val functionBody = extractFunctionBody(lines, annotationIndex)
+        val controllerExceptions = analyzeExceptionsInFunction(functionBody, annotationIndex)
+        
+        // 모든 예외 합치고 중복 제거
+        val allExceptions = controllerExceptions + serviceExceptions
+        val exceptions = allExceptions.distinctBy { it.exceptionType }
+        
         return EndpointInfo(
             method = method,
             path = fullPath,
             requestType = functionSignature.first,
             responseType = functionSignature.second,
             requestDetails = requestDetails,
-            responseDetails = responseDetails
+            responseDetails = responseDetails,
+            exceptions = exceptions
         )
     }
     
@@ -262,6 +282,31 @@ class ControllerAnalyzer {
             }
         }
         return Pair( "", "")
+    }
+    
+    private fun extractFunctionBody(lines: List<String>, startIndex: Int): String {
+        var braceCount = 0
+        var inFunction = false
+        val functionLines = mutableListOf<String>()
+        
+        for (i in startIndex until lines.size) {
+            val line = lines[i]
+            
+            if (!inFunction && (line.trim().startsWith("fun ") || line.trim().startsWith("public "))) {
+                inFunction = true
+                functionLines.add(line)
+                braceCount += line.count { it == '{' } - line.count { it == '}' }
+            } else if (inFunction) {
+                functionLines.add(line)
+                braceCount += line.count { it == '{' } - line.count { it == '}' }
+                
+                if (braceCount <= 0) {
+                    break
+                }
+            }
+        }
+        
+        return functionLines.joinToString("\n")
     }
     
     private fun extractRequestType(functionLine: String): String {
@@ -803,9 +848,6 @@ class ControllerAnalyzer {
             margin-bottom: 0;
         }
         .field code {
-            background: #2c3e50;
-            padding: 2px 6px;
-            border-radius: 3px;
             color: #ecf0f1;
         }
         .json-data {
@@ -836,7 +878,117 @@ class ControllerAnalyzer {
         code {
             color: #f39c12;
         }
+        .controller-header {
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .controller-header:hover {
+            background: linear-gradient(135deg, #2980b9 0%, #1f5f8b 100%);
+        }
+        .controller-header-content {
+            flex: 1;
+        }
+        .controller-content {
+            transition: all 0.3s ease;
+        }
+        .controller-content {
+            display: none;
+        }
+        .controller.expanded .controller-content {
+            display: block;
+        }
+        .toggle-icon {
+            font-size: 1.2em;
+            transition: transform 0.3s ease;
+            color: rgba(255, 255, 255, 0.8);
+            margin-left: 15px;
+        }
+        .controller .toggle-icon {
+            transform: rotate(-90deg);
+        }
+        .controller.expanded .toggle-icon {
+            transform: rotate(0deg);
+        }
+        .endpoint-header {
+            cursor: pointer;
+            user-select: none;
+        }
+        .endpoint-header:hover {
+            background: #505050;
+        }
+        .endpoint-content {
+            transition: all 0.3s ease;
+        }
+        .endpoint-content {
+            display: none;
+        }
+        .endpoint.expanded .endpoint-content {
+            display: block;
+        }
+        .endpoint-toggle-icon {
+            font-size: 1em;
+            transition: transform 0.3s ease;
+            color: rgba(255, 255, 255, 0.8);
+            margin-left: 10px;
+        }
+        .endpoint .endpoint-toggle-icon {
+            transform: rotate(-90deg);
+        }
+        .endpoint.expanded .endpoint-toggle-icon {
+            transform: rotate(0deg);
+        }
+        .exceptions {
+            margin-top: 10px;
+        }
+        .exception {
+            background: #8B0000;
+            color: #ffcccc;
+            padding: 12px;
+            border-radius: 6px;
+            margin: 8px 0;
+            border-left: 4px solid #ff4444;
+        }
+        .exception-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 5px;
+        }
+        .error-code {
+            background: #ff4444;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-weight: bold;
+            font-size: 0.8em;
+            min-width: 40px;
+            text-align: center;
+        }
+        .exception-type {
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            color: #ffcccc;
+        }
+        .error-message {
+            color: #ffaaaa;
+            font-size: 0.9em;
+            margin-top: 3px;
+        }
     </style>
+    <script>
+        function toggleController(controllerId) {
+            const controller = document.getElementById(controllerId);
+            controller.classList.toggle('expanded');
+        }
+        
+        function toggleEndpoint(endpointId) {
+            const endpoint = document.getElementById(endpointId);
+            endpoint.classList.toggle('expanded');
+        }
+    </script>
 </head>
 <body>
     <div class="container">
@@ -846,21 +998,31 @@ class ControllerAnalyzer {
         </div>
         
         ${controllers.joinToString("\n") { controller ->
+            val controllerId = "controller-${controller.className.lowercase()}"
             """
-            <div class="controller">
-                <div class="controller-header">
-                    <h2>${controller.className}</h2>
-                    <div class="module">📦 Module: ${controller.module} | 📄 File: ${controller.fileName}</div>
+            <div class="controller" id="$controllerId">
+                <div class="controller-header" onclick="toggleController('$controllerId')">
+                    <div class="controller-header-content">
+                        <h2>${controller.className}</h2>
+                        <div class="module">📦 Module: ${controller.module} | 📄 File: ${controller.fileName}</div>
+                    </div>
+                    <div class="toggle-icon">▼</div>
                 </div>
-                <div class="endpoints">
-                    ${controller.endpoints.joinToString("\n") { endpoint ->
-                        """
-                        <div class="endpoint">
-                            <div class="endpoint-header">
-                                <span class="method ${endpoint.method.lowercase()}">${endpoint.method}</span>
-                                <span class="path">${endpoint.path}</span>
-                            </div>
-                            <div class="details">
+                <div class="controller-content">
+                    <div class="endpoints">
+                                                ${controller.endpoints.mapIndexed { index, endpoint ->
+                            val endpointId = "endpoint-${controller.className.lowercase()}-$index"
+                            """
+                            <div class="endpoint" id="$endpointId">
+                                <div class="endpoint-header" onclick="toggleEndpoint('$endpointId')">
+                                    <div style="display: flex; align-items: center; flex: 1;">
+                                        <span class="method ${endpoint.method.lowercase()}">${endpoint.method}</span>
+                                        <span class="path">${endpoint.path}</span>
+                                    </div>
+                                    <div class="endpoint-toggle-icon">▼</div>
+                                </div>
+                                <div class="endpoint-content">
+                                    <div class="details">
                                 ${if (endpoint.requestDetails.pathVariables.isNotEmpty()) "<div class='detail-item'><span class='detail-label'>🔗 Path Variables:</span> <code>${endpoint.requestDetails.pathVariables.joinToString(", ")}</code></div>" else ""}
                                 ${if (endpoint.requestDetails.bodyType != null) {
                                     val requestFields = analyzeDtoFields(endpoint.requestDetails.bodyType)
@@ -901,19 +1063,38 @@ class ControllerAnalyzer {
                                     </div>
                                     """
                                 } else ""}
+                                ${if (endpoint.exceptions.isNotEmpty()) {
+                                    """
+                                    <div class='detail-item'>
+                                        <span class='detail-label'>⚠️ Exceptions:</span>
+                                        <div class='exceptions'>
+                                            ${endpoint.exceptions.map { exception ->
+                                                """
+                                                <div class='exception'>
+                                                    <div class='exception-header'>
+                                                        <span class='error-code'>${exception.errorCode}</span>
+                                                        <span class='exception-type'>${exception.exceptionType}</span>
+                                                    </div>
+                                                    <div class='error-message'>${exception.errorResponse}</div>
+                                                </div>
+                                                """
+                                            }.joinToString("")}
+                                        </div>
+                                    </div>
+                                    """
+                                } else ""}
+                                    </div>
+                                </div>
                             </div>
-                        </div>
-                        """
-                    }}
+                            """
+                        }.joinToString("\n")}
+                    </div>
                 </div>
             </div>
             """
         }}
         
-        <div class="json-data">
-            <strong>📄 JSON 데이터:</strong>
-            <pre>$json</pre>
-        </div>
+
     </div>
 </body>
 </html>
@@ -938,7 +1119,8 @@ data class EndpointInfo(
     val requestType: String,
     val responseType: String,
     val requestDetails: RequestDetails,
-    val responseDetails: ResponseDetails
+    val responseDetails: ResponseDetails,
+    val exceptions: List<ExceptionInfo>
 )
 
 data class RequestDetails(
@@ -967,3 +1149,149 @@ data class ParameterInfo(
     val annotation: String?,
     val required: Boolean
 )
+
+data class ExceptionInfo(
+    val exceptionType: String,
+    val message: String?,
+    val errorCode: String,
+    val errorResponse: String
+)
+
+    private fun analyzeExceptionsInFunction(functionBody: String, startLine: Int): List<ExceptionInfo> {
+        val exceptions = mutableListOf<ExceptionInfo>()
+        val lines = functionBody.lines()
+        
+        for ((index, line) in lines.withIndex()) {
+            val trimmedLine = line.trim()
+            
+            // throw 구문 찾기
+            val throwPatterns = listOf(
+                // 기본 throw 구문
+                Regex("""throw\s+(\w+(?:\.\w+)*)(?:\(\))?(?:.*)?"""),
+                // orElseThrow 패턴
+                Regex("""\.orElseThrow\s*\{\s*(\w+(?:\.\w+)*)(?:\(\))?\s*\}"""),
+                // throw with message
+                Regex("""throw\s+(\w+(?:\.\w+)*)\s*\(\s*[""']([^""']*)[""']\s*\)""")
+            )
+            
+            for (pattern in throwPatterns) {
+                val match = pattern.find(trimmedLine)
+                if (match != null) {
+                    val exceptionType = match.groupValues[1]
+                    val message = if (match.groupValues.size > 2) match.groupValues[2] else null
+                    
+                    val errorCode = generateErrorCode(exceptionType)
+                    val errorResponse = generateErrorResponse(exceptionType, message)
+                    
+                    exceptions.add(ExceptionInfo(
+                        exceptionType = exceptionType,
+                        message = message,
+                        errorCode = errorCode,
+                        errorResponse = errorResponse
+                    ))
+                    
+                    println("🔍 예외 발견: $exceptionType (에러 코드: $errorCode)")
+                    break
+                }
+            }
+        }
+        
+        return exceptions
+    }
+    
+    private fun analyzeServiceExceptions(controllerName: String, module: String): List<ExceptionInfo> {
+        val exceptions = mutableListOf<ExceptionInfo>()
+        
+        // Service 파일 찾기
+        val businessFiles = findBusinessLogicFiles(controllerName, module)
+        
+        for (file in businessFiles) {
+            val content = file.readText()
+            val lines = content.lines()
+            
+            for ((lineIndex, line) in lines.withIndex()) {
+                val trimmedLine = line.trim()
+                
+                // throw 구문 찾기
+                val throwPatterns = listOf(
+                    Regex("""throw\s+(\w+(?:\.\w+)*)(?:\(\))?(?:.*)?"""),
+                    Regex("""\.orElseThrow\s*\{\s*(\w+(?:\.\w+)*)(?:\(\))?\s*\}"""),
+                    Regex("""throw\s+(\w+(?:\.\w+)*)\s*\(\s*[""']([^""']*)[""']\s*\)""")
+                )
+                
+                for (pattern in throwPatterns) {
+                    val match = pattern.find(trimmedLine)
+                    if (match != null) {
+                        val exceptionType = match.groupValues[1]
+                        val message = if (match.groupValues.size > 2) match.groupValues[2] else null
+                        
+                        val errorCode = generateErrorCode(exceptionType)
+                        val errorResponse = generateErrorResponse(exceptionType, message)
+                        
+                        exceptions.add(ExceptionInfo(
+                            exceptionType = exceptionType,
+                            message = message,
+                            errorCode = errorCode,
+                            errorResponse = errorResponse
+                        ))
+                        
+                        println("🔍 Service 예외 발견: $exceptionType (에러 코드: $errorCode)")
+                        break
+                    }
+                }
+            }
+        }
+        
+        return exceptions
+    }
+    
+    private fun findBusinessLogicFiles(controllerName: String, module: String): List<File> {
+        val businessFiles = mutableListOf<File>()
+        val businessKeywords = listOf("Service", "Manager", "Processor", "Analyzer", "Engine", "Orchestrator")
+        val serviceDirKotlin = File("$module/src/main/kotlin")
+        val serviceDirJava = File("$module/src/main/java")
+
+        if (serviceDirKotlin.exists()) {
+            serviceDirKotlin.walkTopDown()
+                .filter { it.isFile && it.extension in listOf("kt", "java") }
+                .filter { file -> businessKeywords.any { keyword -> file.name.contains(keyword) } }
+                .forEach { businessFiles.add(it) }
+        }
+        if (serviceDirJava.exists()) {
+            serviceDirJava.walkTopDown()
+                .filter { it.isFile && it.extension in listOf("kt", "java") }
+                .filter { file -> businessKeywords.any { keyword -> file.name.contains(keyword) } }
+                .forEach { businessFiles.add(it) }
+        }
+        return businessFiles
+    }
+    
+    private fun generateErrorCode(exceptionType: String): String {
+        return when (exceptionType) {
+            "UserNotFoundException" -> "404"
+            "BookingNotFoundException" -> "404"
+            "StockNotFoundException" -> "404"
+            "ValidationException" -> "400"
+            "UnauthorizedException" -> "401"
+            "ForbiddenException" -> "403"
+            "ConflictException" -> "409"
+            "InternalServerException" -> "500"
+            else -> "500"
+        }
+    }
+    
+    private fun generateErrorResponse(exceptionType: String, message: String?): String {
+        val defaultMessage = when (exceptionType) {
+            "UserNotFoundException" -> "사용자를 찾을 수 없습니다"
+            "BookingNotFoundException" -> "예약을 찾을 수 없습니다"
+            "StockNotFoundException" -> "재고를 찾을 수 없습니다"
+            "ValidationException" -> "잘못된 요청입니다"
+            "UnauthorizedException" -> "인증이 필요합니다"
+            "ForbiddenException" -> "접근 권한이 없습니다"
+            "ConflictException" -> "리소스 충돌이 발생했습니다"
+            "InternalServerException" -> "서버 내부 오류가 발생했습니다"
+            else -> "알 수 없는 오류가 발생했습니다"
+        }
+        
+        return message ?: defaultMessage
+    }

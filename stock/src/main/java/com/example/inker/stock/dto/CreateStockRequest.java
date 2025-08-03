@@ -91,7 +91,7 @@ public class CreateStockRequest {
 /**
  * 주식 수정 요청 DTO
  */
-class UpdateStockRequest {
+public class UpdateStockRequest {
     private String symbol;
     private String companyName;
     private Double currentPrice;
@@ -164,7 +164,7 @@ class UpdateStockRequest {
 /**
  * 주식 가격 업데이트 요청 DTO
  */
-class UpdateStockPriceRequest {
+public class UpdateStockPriceRequest {
     private Double currentPrice;
     private Double previousPrice;
     private Long volume;
@@ -208,7 +208,7 @@ class UpdateStockPriceRequest {
 /**
  * 주식 응답 DTO
  */
-class StockResponse {
+public class StockResponse {
     private Long id;
     private String symbol;
     private String companyName;
