@@ -41,4 +41,3 @@ subprojects {
         testImplementation(kotlin("test"))
     }
 }
-
