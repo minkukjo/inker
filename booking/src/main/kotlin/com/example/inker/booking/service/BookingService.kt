@@ -6,6 +6,7 @@ import com.example.inker.booking.dto.UpdateBookingStatusRequest
 import com.example.inker.booking.dto.BookingResponse
 import com.example.inker.booking.entity.Booking
 import com.example.inker.booking.entity.BookingStatus
+import com.example.inker.booking.exception.BookingNotFoundException
 import org.springframework.stereotype.Service
 import java.time.LocalDateTime
 
@@ -30,7 +31,7 @@ class BookingService {
      * ID로 예약 조회
      */
     fun getBookingById(id: Long): BookingResponse? {
-        return bookings[id]?.let { BookingResponse.from(it) }
+        return bookings[id]?.let { BookingResponse.from(it) } ?: throw BookingNotFoundException()
     }
     
     /**
@@ -64,8 +65,8 @@ class BookingService {
     /**
      * 예약 수정
      */
-    fun updateBooking(id: Long, request: UpdateBookingRequest): BookingResponse? {
-        val existingBooking = bookings[id] ?: return null
+    fun updateBooking(id: Long, request: UpdateBookingRequest): BookingResponse {
+        val existingBooking = bookings[id] ?: throw BookingNotFoundException()
         
         val updatedBooking = existingBooking.copy(
             serviceName = request.serviceName ?: existingBooking.serviceName,
@@ -83,8 +84,8 @@ class BookingService {
     /**
      * 예약 상태 변경
      */
-    fun updateBookingStatus(id: Long, request: UpdateBookingStatusRequest): BookingResponse? {
-        val existingBooking = bookings[id] ?: return null
+    fun updateBookingStatus(id: Long, request: UpdateBookingStatusRequest): BookingResponse {
+        val existingBooking = bookings[id] ?: throw BookingNotFoundException()
         
         val updatedBooking = existingBooking.copy(
             status = request.status,
@@ -99,7 +100,7 @@ class BookingService {
      * 예약 삭제
      */
     fun deleteBooking(id: Long): Boolean {
-        return bookings.remove(id) != null
+        return bookings.remove(id)?.let { true } ?: throw BookingNotFoundException()
     }
     
     /**

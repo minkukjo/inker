@@ -4,6 +4,7 @@ import com.example.inker.user.dto.CreateUserRequest
 import com.example.inker.user.dto.UpdateUserRequest
 import com.example.inker.user.dto.UserResponse
 import com.example.inker.user.entity.User
+import com.example.inker.user.exception.UserNotFoundException
 import org.springframework.stereotype.Service
 import java.time.LocalDateTime
 
@@ -27,8 +28,8 @@ class UserService {
     /**
      * ID로 사용자 조회
      */
-    fun getUserById(id: Long): UserResponse? {
-        return users[id]?.let { UserResponse.from(it) }
+    fun getUserById(id: Long): UserResponse {
+        return users[id]?.let { UserResponse.from(it) } ?: throw UserNotFoundException()
     }
     
     /**
@@ -51,8 +52,8 @@ class UserService {
     /**
      * 사용자 수정
      */
-    fun updateUser(id: Long, request: UpdateUserRequest): UserResponse? {
-        val existingUser = users[id] ?: return null
+    fun updateUser(id: Long, request: UpdateUserRequest): UserResponse {
+        val existingUser = users[id] ?: throw UserNotFoundException()
         
         val updatedUser = existingUser.copy(
             name = request.name ?: existingUser.name,
@@ -69,6 +70,6 @@ class UserService {
      * 사용자 삭제
      */
     fun deleteUser(id: Long): Boolean {
-        return users.remove(id) != null
+        return users.remove(id)?.let { true } ?: throw UserNotFoundException()
     }
 } 
