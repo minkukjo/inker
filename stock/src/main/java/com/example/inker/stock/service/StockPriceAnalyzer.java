@@ -165,7 +165,7 @@ public class StockPriceAnalyzer {
     
     public void analyzePriceForCreate(CreateStockRequest request) {
         // 4단계: 생성용 가격 분석
-        if (request == null || request.getPrice() == null || request.getPrice() <= 0) {
+        if (request == null || request.getCurrentPrice() == null || request.getCurrentPrice() <= 0) {
             throw new InvalidPriceException("유효하지 않은 생성 가격입니다");
         }
         

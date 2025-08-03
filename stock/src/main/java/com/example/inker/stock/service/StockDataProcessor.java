@@ -1,6 +1,7 @@
 package com.example.inker.stock.service;
 
 import com.example.inker.stock.dto.CreateStockRequest;
+import com.example.inker.stock.dto.UpdateStockRequest;
 import com.example.inker.stock.entity.Stock;
 import com.example.inker.stock.exception.StockValidationException;
 
@@ -121,9 +122,9 @@ public class StockDataProcessor {
         }
     }
     
-    public void validateUpdateRequest(Long id, Stock updatedStock) {
+    public void validateUpdateRequest(Long id, UpdateStockRequest request) {
         // 3단계: 업데이트 요청 검증
-        if (id == null || updatedStock == null) {
+        if (id == null || request == null) {
             throw new StockValidationException("유효하지 않은 업데이트 요청입니다");
         }
         
@@ -185,7 +186,7 @@ public class StockDataProcessor {
     
     public void validateCreateRequest(CreateStockRequest request) {
         // 3단계: 생성 요청 검증
-        if (request == null || request.getSymbol() == null || request.getName() == null) {
+        if (request == null || request.getSymbol() == null || request.getCompanyName() == null) {
             throw new StockValidationException("유효하지 않은 재고 생성 요청입니다");
         }
         

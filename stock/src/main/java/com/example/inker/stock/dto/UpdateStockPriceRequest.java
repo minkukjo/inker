@@ -19,6 +19,10 @@ public class UpdateStockPriceRequest {
     }
     
     // Getter와 Setter
+    public Double getPrice() {
+        return currentPrice;
+    }
+    
     public Double getCurrentPrice() {
         return currentPrice;
     }
