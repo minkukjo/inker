@@ -1,12 +1,11 @@
 package com.example.inker.stock.dto;
 
 import com.example.inker.stock.entity.Stock;
-import java.time.LocalDateTime;
-
-/**
- * 주식 생성 요청 DTO
+import java.time.LocalDateTime; /**
+ * 주식 응답 DTO
  */
-public class CreateStockRequest {
+public class StockResponse {
+    private Long id;
     private String symbol;
     private String companyName;
     private Double currentPrice;
@@ -14,13 +13,16 @@ public class CreateStockRequest {
     private Long volume;
     private Double marketCap;
     private String sector;
+    private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
     
     // 기본 생성자
-    public CreateStockRequest() {}
+    public StockResponse() {}
     
     // 생성자
-    public CreateStockRequest(String symbol, String companyName, Double currentPrice, Double previousPrice, 
-                             Long volume, Double marketCap, String sector) {
+    public StockResponse(Long id, String symbol, String companyName, Double currentPrice, Double previousPrice, 
+                        Long volume, Double marketCap, String sector, LocalDateTime createdAt, LocalDateTime updatedAt) {
+        this.id = id;
         this.symbol = symbol;
         this.companyName = companyName;
         this.currentPrice = currentPrice;
@@ -28,9 +30,35 @@ public class CreateStockRequest {
         this.volume = volume;
         this.marketCap = marketCap;
         this.sector = sector;
+        this.createdAt = createdAt;
+        this.updatedAt = updatedAt;
+    }
+    
+    // from 메서드
+    public static StockResponse from(Stock stock) {
+        return new StockResponse(
+            stock.getId(),
+            stock.getSymbol(),
+            stock.getCompanyName(),
+            stock.getCurrentPrice(),
+            stock.getPreviousPrice(),
+            stock.getVolume(),
+            stock.getMarketCap(),
+            stock.getSector(),
+            stock.getCreatedAt(),
+            stock.getUpdatedAt()
+        );
     }
     
     // Getter와 Setter
+    public Long getId() {
+        return id;
+    }
+    
+    public void setId(Long id) {
+        this.id = id;
+    }
+    
     public String getSymbol() {
         return symbol;
     }
@@ -86,5 +114,20 @@ public class CreateStockRequest {
     public void setSector(String sector) {
         this.sector = sector;
     }
+    
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+    
+    public void setCreatedAt(LocalDateTime createdAt) {
+        this.createdAt = createdAt;
+    }
+    
+    public LocalDateTime getUpdatedAt() {
+        return updatedAt;
+    }
+    
+    public void setUpdatedAt(LocalDateTime updatedAt) {
+        this.updatedAt = updatedAt;
+    }
 }
-

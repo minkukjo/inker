@@ -1,12 +1,9 @@
 package com.example.inker.stock.dto;
 
-import com.example.inker.stock.entity.Stock;
-import java.time.LocalDateTime;
-
 /**
- * 주식 생성 요청 DTO
+ * 주식 수정 요청 DTO
  */
-public class CreateStockRequest {
+public class UpdateStockRequest {
     private String symbol;
     private String companyName;
     private Double currentPrice;
@@ -16,19 +13,7 @@ public class CreateStockRequest {
     private String sector;
     
     // 기본 생성자
-    public CreateStockRequest() {}
-    
-    // 생성자
-    public CreateStockRequest(String symbol, String companyName, Double currentPrice, Double previousPrice, 
-                             Long volume, Double marketCap, String sector) {
-        this.symbol = symbol;
-        this.companyName = companyName;
-        this.currentPrice = currentPrice;
-        this.previousPrice = previousPrice;
-        this.volume = volume;
-        this.marketCap = marketCap;
-        this.sector = sector;
-    }
+    public UpdateStockRequest() {}
     
     // Getter와 Setter
     public String getSymbol() {
@@ -87,4 +72,3 @@ public class CreateStockRequest {
         this.sector = sector;
     }
 }
-
