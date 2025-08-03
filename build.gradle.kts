@@ -49,6 +49,7 @@ configurations.create("analysis") {
 
 dependencies {
     "analysis"("org.jetbrains.kotlin:kotlin-compiler-embeddable:1.9.24")
+    "analysis"("org.jetbrains.kotlin:kotlin-compiler-internal-test-framework:1.9.24")
     "analysis"("com.fasterxml.jackson.core:jackson-databind")
     "analysis"("com.fasterxml.jackson.module:jackson-module-kotlin")
 }
@@ -72,6 +73,8 @@ val analysisConfig = mapOf(
     "excludeDirs" to listOf("build", ".gradle", ".git", ".idea", "node_modules"),
     "controllerAnnotations" to listOf("@RestController", "@Controller")
 )
+
+
 
 // Controller 분석기 클래스
 class ControllerAnalyzer {
@@ -149,24 +152,40 @@ class ControllerAnalyzer {
         var basePath = ""
         val endpoints = mutableListOf<EndpointInfo>()
         
-        var currentClass: String
+        var currentClass = ""
         var currentBasePath = ""
         var inClass = false
         
         for (line in lines) {
             val trimmedLine = line.trim()
             
+            // @RequestMapping 찾기 (클래스 선언 전에도 처리)
+            if (trimmedLine.startsWith("@RequestMapping(")) {
+                currentBasePath = extractPathFromAnnotation(trimmedLine)
+                basePath = currentBasePath
+                println("🔍 Base path 발견: $basePath")
+            }
+            
             // 클래스 이름 찾기
             if (trimmedLine.startsWith("class ") && trimmedLine.contains("Controller")) {
                 currentClass = trimmedLine.substringAfter("class ").substringBefore("(").substringBefore(":")
                 className = currentClass
                 inClass = true
+                println("🔍 Controller 클래스 발견: $className")
             }
             
-            // @RequestMapping 찾기
-            if (trimmedLine.startsWith("@RequestMapping(") && inClass) {
-                currentBasePath = extractPathFromAnnotation(trimmedLine)
-                basePath = currentBasePath
+            // Java 클래스도 찾기
+            if (trimmedLine.startsWith("public class ") && trimmedLine.contains("Controller")) {
+                currentClass = trimmedLine.substringAfter("public class ").substringBefore("(").substringBefore(":")
+                className = currentClass
+                inClass = true
+                println("🔍 Java Controller 클래스 발견: $className")
+            }
+            
+            // 디버깅: 모든 @RequestMapping 라인 확인
+            if (trimmedLine.contains("@RequestMapping")) {
+                println("🔍 @RequestMapping 라인 발견: $trimmedLine")
+                println("🔍 inClass: $inClass")
             }
             
             // HTTP 메서드 어노테이션 찾기
@@ -215,24 +234,23 @@ class ControllerAnalyzer {
         
         // 상세 파라미터 분석
         val requestDetails = analyzeRequestDetails(lines, annotationIndex)
-        val responseDetails = analyzeResponseDetails(functionSignature.third)
+        val responseDetails = analyzeResponseDetails(functionSignature.second)
         
         return EndpointInfo(
             method = method,
             path = fullPath,
-            functionName = functionSignature.first,
-            requestType = functionSignature.second,
-            responseType = functionSignature.third,
+            requestType = functionSignature.first,
+            responseType = functionSignature.second,
             requestDetails = requestDetails,
             responseDetails = responseDetails
         )
     }
     
-    private fun findFunctionSignature(lines: List<String>, startIndex: Int): Triple<String, String, String> {
+    private fun findFunctionSignature(lines: List<String>, startIndex: Int): Pair<String, String> {
         for (i in startIndex until lines.size) {
             val line = lines[i].trim()
-            if (line.startsWith("fun ")) {
-                val functionName = line.substringAfter("fun ").substringBefore("(")
+            if (line.startsWith("fun ") || line.startsWith("public ")) {
+                // 메소드명 제거 - 빈 문자열 반환
                 
                 // Request 타입 찾기
                 val requestType = extractRequestType(line)
@@ -240,45 +258,60 @@ class ControllerAnalyzer {
                 // Response 타입 찾기
                 val responseType = extractResponseType(line)
                 
-                return Triple(functionName, requestType, responseType)
+                return Pair(requestType, responseType)
             }
         }
-        return Triple("", "", "")
+        return Pair( "", "")
     }
     
     private fun extractRequestType(functionLine: String): String {
-        // @RequestBody 파라미터 찾기
-        val requestBodyMatch = Regex("@RequestBody\\s+([A-Za-z0-9<>]+)").find(functionLine)
-        if (requestBodyMatch != null) {
-            return requestBodyMatch.groupValues[1]
+        // @RequestBody request: CreateBookingRequest 형태 파싱
+        if (functionLine.contains("@RequestBody")) {
+            val requestBodyMatch = Regex("@RequestBody\\s+([a-zA-Z][a-zA-Z0-9]*)\\s*:\\s*([A-Za-z0-9<>]+)").find(functionLine)
+            if (requestBodyMatch != null) {
+                return requestBodyMatch.groupValues[2] // 타입 부분 반환
+            }
+            
+            // @RequestBody CreateBookingRequest request 형태 파싱
+            val simpleMatch = Regex("@RequestBody\\s+([A-Za-z0-9<>]+)").find(functionLine)
+            if (simpleMatch != null) {
+                return simpleMatch.groupValues[1]
+            }
         }
         
-        // @PathVariable 파라미터 찾기
-        val pathVariableMatch = Regex("@PathVariable\\s+([A-Za-z0-9]+)").find(functionLine)
-        if (pathVariableMatch != null) {
-            return pathVariableMatch.groupValues[1]
-        }
-        
-        // 일반 파라미터 찾기 (변수명이 아닌 타입을 찾기)
-        val paramMatch = Regex("\\([^)]*\\b([A-Z][a-zA-Z0-9]*)\\s+[a-z][a-zA-Z0-9]*[^)]*\\)").find(functionLine)
-        if (paramMatch != null) {
-            return paramMatch.groupValues[1]
+        // @PathVariable id: Long 형태 파싱
+        if (functionLine.contains("@PathVariable")) {
+            val pathVariableMatch = Regex("@PathVariable\\s+([a-zA-Z][a-zA-Z0-9]*)\\s*:\\s*([A-Za-z0-9<>]+)").find(functionLine)
+            if (pathVariableMatch != null) {
+                return pathVariableMatch.groupValues[2] // 타입 부분 반환
+            }
+            
+            // @PathVariable Long id 형태 파싱
+            val simplePathVariableMatch = Regex("@PathVariable\\s+([A-Za-z0-9<>]+)").find(functionLine)
+            if (simplePathVariableMatch != null) {
+                return simplePathVariableMatch.groupValues[1]
+            }
         }
         
         return ""
     }
     
     private fun extractResponseType(functionLine: String): String {
-        // ResponseEntity<Type> 찾기
-        val responseMatch = Regex("ResponseEntity<([A-Za-z0-9<>]+)>").find(functionLine)
-        if (responseMatch != null) {
-            return responseMatch.groupValues[1]
+        // 간단한 문자열 파싱으로 변경
+        if (functionLine.contains("ResponseEntity<")) {
+            val start = functionLine.indexOf("ResponseEntity<") + "ResponseEntity<".length
+            val end = functionLine.indexOf(">", start)
+            if (start > 0 && end > start) {
+                return functionLine.substring(start, end)
+            }
         }
         
-        // 직접 반환 타입 찾기
-        val directReturnMatch = Regex(":\\s*([A-Za-z0-9<>]+)\\s*\\{").find(functionLine)
-        if (directReturnMatch != null) {
-            return directReturnMatch.groupValues[1]
+        if (functionLine.contains(":")) {
+            val parts = functionLine.split(":")
+            if (parts.size > 1) {
+                val returnType = parts[1].trim().split("\\s+".toRegex()).firstOrNull()
+                return returnType ?: ""
+            }
         }
         
         return ""
@@ -289,23 +322,52 @@ class ControllerAnalyzer {
         val pathVariables = mutableListOf<String>()
         var bodyType: String? = null
         
-        // 함수 정의 라인 찾기
+        // 함수 정의 라인 찾기 (여러 줄에 걸친 경우도 처리)
+        var functionSignature = ""
+        var braceCount = 0
+        var inFunction = false
+        
         for (i in startIndex until lines.size) {
             val line = lines[i].trim()
-            if (line.startsWith("fun ")) {
-                // 파라미터 부분 추출
-                val paramSection = line.substringAfter("(").substringBefore(")")
-                if (paramSection.isNotEmpty()) {
-                    val paramList = parseParameters(paramSection)
-                    parameters.addAll(paramList)
-                    
-                    // @RequestBody 타입 찾기
-                    bodyType = paramList.find { it.annotation == "@RequestBody" }?.type
-                    
-                    // @PathVariable 찾기
-                    pathVariables.addAll(paramList.filter { it.annotation == "@PathVariable" }.map { it.name })
+            
+            if (line.startsWith("fun ") || line.startsWith("public ")) {
+                inFunction = true
+                functionSignature = line
+                braceCount = line.count { it == '(' } - line.count { it == ')' }
+                
+                if (braceCount == 0) {
+                    // 한 줄에 완성된 함수 시그니처
+                    break
                 }
-                break
+            } else if (inFunction) {
+                functionSignature += " " + line
+                braceCount += line.count { it == '(' } - line.count { it == ')' }
+                
+                if (braceCount == 0) {
+                    break
+                }
+            }
+        }
+        
+        if (functionSignature.isNotEmpty()) {
+            // 파라미터 부분 추출
+            val paramSection = extractParameterSection(functionSignature)
+            if (paramSection.isNotEmpty()) {
+                val paramList = parseParameters(paramSection)
+                parameters.addAll(paramList)
+                
+                // @RequestBody 타입 찾기 - 더 정확한 방법으로 개선
+                val requestBodyParam = paramList.find { it.annotation == "@RequestBody" }
+                if (requestBodyParam != null) {
+                    bodyType = requestBodyParam.type
+                    // 타입이 Unknown인 경우 함수 시그니처에서 다시 찾기
+                    if (bodyType == "Unknown") {
+                        bodyType = findRequestBodyTypeFromSignature(functionSignature, requestBodyParam.name)
+                    }
+                }
+                
+                // @PathVariable 찾기
+                pathVariables.addAll(paramList.filter { it.annotation == "@PathVariable" }.map { it.name })
             }
         }
         
@@ -314,6 +376,33 @@ class ControllerAnalyzer {
             bodyType = bodyType,
             pathVariables = pathVariables
         )
+    }
+    
+    private fun findRequestBodyTypeFromSignature(signature: String, paramName: String): String? {
+        // @RequestBody request: CreateUserRequest 형태 찾기
+        val typeMatch = Regex("@RequestBody\\s+$paramName\\s*:\\s*([A-Za-z0-9<>]+)").find(signature)
+        if (typeMatch != null) {
+            return typeMatch.groupValues[1]
+        }
+        
+        // CreateUserRequest request 형태 찾기
+        val typeNameMatch = Regex("([A-Za-z0-9<>]+)\\s+$paramName").find(signature)
+        if (typeNameMatch != null) {
+            return typeNameMatch.groupValues[1]
+        }
+        
+        return null
+    }
+    
+    private fun extractParameterSection(functionSignature: String): String {
+        val startIndex = functionSignature.indexOf('(')
+        val endIndex = functionSignature.indexOf(')')
+        
+        if (startIndex != -1 && endIndex != -1 && endIndex > startIndex) {
+            return functionSignature.substring(startIndex + 1, endIndex)
+        }
+        
+        return ""
     }
     
     private fun parseParameters(paramSection: String): List<ParameterInfo> {
@@ -338,18 +427,53 @@ class ControllerAnalyzer {
         // @RequestBody CreateUserRequest request
         // @PathVariable id: Long
         // request: CreateUserRequest
+        // Long id
         
-        val annotationMatch = Regex("(@[A-Za-z]+)\\s+([A-Za-z0-9<>]+)\\s+([a-z][a-zA-Z0-9]*)").find(param)
-        if (annotationMatch != null) {
+        // @PathVariable id: Long 형태
+        val pathVariableMatch = Regex("@PathVariable\\s+([a-z][a-zA-Z0-9]*)\\s*:\\s*([A-Za-z0-9<>]+)").find(param)
+        if (pathVariableMatch != null) {
             return ParameterInfo(
-                name = annotationMatch.groupValues[3],
-                type = annotationMatch.groupValues[2],
-                annotation = annotationMatch.groupValues[1],
+                name = pathVariableMatch.groupValues[1],
+                type = pathVariableMatch.groupValues[2],
+                annotation = "@PathVariable",
                 required = true
             )
         }
         
-        // 타입 변수명 형태
+        // @RequestBody request: CreateBookingRequest 형태
+        val requestBodyWithTypeMatch = Regex("@RequestBody\\s+([a-z][a-zA-Z0-9]*)\\s*:\\s*([A-Za-z0-9<>]+)").find(param)
+        if (requestBodyWithTypeMatch != null) {
+            return ParameterInfo(
+                name = requestBodyWithTypeMatch.groupValues[1],
+                type = requestBodyWithTypeMatch.groupValues[2],
+                annotation = "@RequestBody",
+                required = true
+            )
+        }
+        
+        // @RequestBody CreateUserRequest request 형태
+        val requestBodyMatch = Regex("@RequestBody\\s+([A-Za-z0-9<>]+)\\s+([a-z][a-zA-Z0-9]*)").find(param)
+        if (requestBodyMatch != null) {
+            return ParameterInfo(
+                name = requestBodyMatch.groupValues[2],
+                type = requestBodyMatch.groupValues[1],
+                annotation = "@RequestBody",
+                required = true
+            )
+        }
+        
+        // @RequestBody request 형태 (타입이 별도로 있는 경우)
+        val requestBodySimpleMatch = Regex("@RequestBody\\s+([a-z][a-zA-Z0-9]*)").find(param)
+        if (requestBodySimpleMatch != null) {
+            return ParameterInfo(
+                name = requestBodySimpleMatch.groupValues[1],
+                type = "Unknown",
+                annotation = "@RequestBody",
+                required = true
+            )
+        }
+        
+        // Long id 형태
         val typeNameMatch = Regex("([A-Za-z0-9<>]+)\\s+([a-z][a-zA-Z0-9]*)").find(param)
         if (typeNameMatch != null) {
             return ParameterInfo(
@@ -369,11 +493,165 @@ class ControllerAnalyzer {
             responseType.substringAfter("<").substringBefore(">")
         } else null
         
+        // 실제 타입 (List 제거)
+        val actualType = if (isList) genericType else responseType
+        
+        // DTO 클래스의 필드 정보 분석
+        val fields = analyzeDtoFields(actualType)
+        
         return ResponseDetails(
             type = responseType,
             isList = isList,
-            genericType = genericType
+            genericType = genericType,
+            fields = fields
         )
+    }
+    
+    private fun analyzeDtoFields(dtoType: String?): List<FieldInfo> {
+        if (dtoType == null) return emptyList()
+        
+        val fields = mutableListOf<FieldInfo>()
+        
+        // 각 모듈에서 DTO 파일 찾기
+        listOf("user", "booking", "stock").forEach { module ->
+            val dtoPath = "$module/src/main/kotlin"
+            val javaDtoPath = "$module/src/main/java"
+            
+            // Kotlin DTO 파일 찾기
+            if (file(dtoPath).exists()) {
+                file(dtoPath).walkTopDown()
+                    .filter { it.extension == "kt" }
+                    .forEach { file ->
+                        val content = file.readText()
+                        if (content.contains(dtoType)) {
+                            fields.addAll(parseKotlinDtoFields(content, dtoType))
+                        }
+                    }
+            }
+            
+            // Java DTO 파일 찾기
+            if (file(javaDtoPath).exists()) {
+                file(javaDtoPath).walkTopDown()
+                    .filter { it.extension == "java" }
+                    .forEach { file ->
+                        val content = file.readText()
+                        if (content.contains(dtoType)) {
+                            fields.addAll(parseJavaDtoFields(content, dtoType))
+                        }
+                    }
+            }
+        }
+        
+        return fields
+    }
+    
+    private fun parseKotlinDtoFields(content: String, dtoType: String): List<FieldInfo> {
+        val fields = mutableListOf<FieldInfo>()
+        val lines = content.lines()
+        
+        var inTargetClass = false
+        var inDataClass = false
+        
+        for (line in lines) {
+            val trimmedLine = line.trim()
+            
+            // 타겟 클래스 찾기
+            if (trimmedLine.startsWith("data class $dtoType(") || 
+                trimmedLine.startsWith("class $dtoType(")) {
+                inTargetClass = true
+                inDataClass = trimmedLine.startsWith("data class")
+                
+                // 한 줄에 완성된 경우
+                if (trimmedLine.endsWith(")")) {
+                    val paramSection = trimmedLine.substringAfter("(").substringBefore(")")
+                    if (paramSection.isNotEmpty()) {
+                        fields.addAll(parseKotlinParameters(paramSection))
+                    }
+                    break
+                }
+            } else if (inTargetClass && trimmedLine.startsWith("val ")) {
+                // 멀티라인 파라미터
+                val fieldMatch = Regex("val\\s+([a-zA-Z][a-zA-Z0-9]*)\\s*:\\s*([A-Za-z0-9<>?]+)").find(trimmedLine)
+                if (fieldMatch != null) {
+                    val fieldName = fieldMatch.groupValues[1]
+                    val fieldType = fieldMatch.groupValues[2]
+                    val nullable = fieldType.endsWith("?")
+                    val cleanType = if (nullable) fieldType.substringBefore("?") else fieldType
+                    
+                    fields.add(FieldInfo(
+                        name = fieldName,
+                        type = cleanType,
+                        nullable = nullable,
+                        description = null
+                    ))
+                }
+            } else if (inTargetClass && trimmedLine == ")") {
+                break
+            }
+        }
+        
+        return fields
+    }
+    
+    private fun parseJavaDtoFields(content: String, dtoType: String): List<FieldInfo> {
+        val fields = mutableListOf<FieldInfo>()
+        val lines = content.lines()
+        
+        var inTargetClass = false
+        
+        for (line in lines) {
+            val trimmedLine = line.trim()
+            
+            // 타겟 클래스 찾기
+            if (trimmedLine.startsWith("public class $dtoType") || 
+                trimmedLine.startsWith("class $dtoType")) {
+                inTargetClass = true
+            } else if (inTargetClass && trimmedLine.startsWith("private ")) {
+                // Java 필드 파싱
+                val fieldMatch = Regex("private\\s+([A-Za-z0-9<>]+)\\s+([a-zA-Z][a-zA-Z0-9]*)\\s*;").find(trimmedLine)
+                if (fieldMatch != null) {
+                    val fieldType = fieldMatch.groupValues[1]
+                    val fieldName = fieldMatch.groupValues[2]
+                    
+                    fields.add(FieldInfo(
+                        name = fieldName,
+                        type = fieldType,
+                        nullable = false, // Java에서는 기본적으로 nullable이 아님
+                        description = null
+                    ))
+                }
+            } else if (inTargetClass && trimmedLine.startsWith("}")) {
+                break
+            }
+        }
+        
+        return fields
+    }
+    
+    private fun parseKotlinParameters(paramSection: String): List<FieldInfo> {
+        val fields = mutableListOf<FieldInfo>()
+        val params = paramSection.split(",").map { it.trim() }
+        
+        params.forEach { param ->
+            if (param.isNotEmpty()) {
+                val paramMatch = Regex("([a-zA-Z][a-zA-Z0-9]*)\\s*:\\s*([A-Za-z0-9<>?]+)").find(param)
+                if (paramMatch != null) {
+                    val fieldName = paramMatch.groupValues[1]
+                    val fieldType = paramMatch.groupValues[2]
+                    val nullable = fieldType.endsWith("?")
+                    val cleanType = if (nullable) fieldType.substringBefore("?") else fieldType
+                    
+                    fields.add(FieldInfo(
+                        name = fieldName,
+                        type = cleanType,
+                        nullable = nullable,
+                        description = null
+                    ))
+                }
+            }
+        }
+        
+        return fields
     }
     
 
@@ -390,28 +668,27 @@ class ControllerAnalyzer {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Spring Boot Controller API 문서</title>
+    <title>API Documentation</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            line-height: 1.6;
             margin: 0;
             padding: 20px;
-            background-color: #f5f5f5;
+            background-color: #1a1a1a;
+            color: #ffffff;
         }
         .container {
             max-width: 1200px;
             margin: 0 auto;
-            background-color: white;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            overflow: hidden;
         }
         .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
             color: white;
             padding: 30px;
+            border-radius: 10px;
+            margin-bottom: 30px;
             text-align: center;
+            border: 1px solid #34495e;
         }
         .header h1 {
             margin: 0;
@@ -421,201 +698,221 @@ class ControllerAnalyzer {
         .header p {
             margin: 10px 0 0 0;
             opacity: 0.9;
+            font-size: 1.1em;
         }
-        .content {
-            padding: 30px;
-        }
-        .module {
-            margin-bottom: 40px;
-            border: 1px solid #e0e0e0;
-            border-radius: 8px;
+        .controller {
+            background: #2d2d2d;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
             overflow: hidden;
+            border: 1px solid #404040;
         }
-        .module-header {
-            background-color: #f8f9fa;
+        .controller-header {
+            background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+            color: white;
             padding: 20px;
-            border-bottom: 1px solid #e0e0e0;
         }
-        .module-header h2 {
+        .controller-header h2 {
             margin: 0;
-            color: #333;
             font-size: 1.5em;
+            font-weight: 400;
         }
-        .module-header .class-info {
-            margin-top: 10px;
-            color: #666;
-            font-family: 'Courier New', monospace;
+        .controller-header .module {
+            opacity: 0.8;
+            font-size: 0.9em;
+            margin-top: 5px;
         }
         .endpoints {
             padding: 20px;
         }
         .endpoint {
+            border: 1px solid #404040;
+            border-radius: 8px;
             margin-bottom: 20px;
-            padding: 15px;
-            border: 1px solid #e0e0e0;
-            border-radius: 6px;
-            background-color: #fafafa;
+            overflow: hidden;
+            background: #333333;
         }
         .endpoint-header {
+            background: #404040;
+            padding: 15px;
+            border-bottom: 1px solid #505050;
             display: flex;
             align-items: center;
-            margin-bottom: 10px;
+            gap: 15px;
         }
         .method {
-            padding: 4px 8px;
+            padding: 5px 12px;
             border-radius: 4px;
-            color: white;
             font-weight: bold;
-            font-size: 0.8em;
-            margin-right: 10px;
-            min-width: 60px;
-            text-align: center;
+            font-size: 0.9em;
+            text-transform: uppercase;
         }
-        .method.get { background-color: #61affe; }
-        .method.post { background-color: #49cc90; }
-        .method.put { background-color: #fca130; }
-        .method.delete { background-color: #f93e3e; }
-        .method.patch { background-color: #50e3c2; }
+        .method.get { background-color: #27ae60; color: white; }
+        .method.post { background-color: #3498db; color: white; }
+        .method.put { background-color: #f39c12; color: black; }
+        .method.delete { background-color: #e74c3c; color: white; }
+        .method.patch { background-color: #9b59b6; color: white; }
         .path {
             font-family: 'Courier New', monospace;
-            font-weight: bold;
-            color: #333;
-        }
-        .function-name {
-            color: #666;
-            font-style: italic;
-            margin-left: 10px;
+            font-size: 1.1em;
+            color: #ecf0f1;
         }
         .details {
-            margin-top: 10px;
-            font-size: 0.9em;
+            padding: 20px;
         }
         .detail-item {
-            margin: 5px 0;
-            color: #555;
+            margin-bottom: 15px;
         }
         .detail-label {
             font-weight: bold;
-            color: #333;
-        }
-        .detail-item code {
-            background-color: #f1f3f4;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-family: 'Courier New', monospace;
-            font-size: 0.9em;
-            color: #d73a49;
+            color: #ecf0f1;
+            display: block;
+            margin-bottom: 8px;
         }
         .parameter-list {
-            margin-top: 5px;
-            margin-left: 10px;
+            background: #404040;
+            padding: 10px;
+            border-radius: 4px;
+            border-left: 4px solid #3498db;
         }
         .parameter {
-            margin: 2px 0;
-            padding: 2px 0;
+            margin-bottom: 5px;
+        }
+        .parameter:last-child {
+            margin-bottom: 0;
         }
         .annotation {
-            color: #6f42c1;
+            color: #3498db;
             font-weight: bold;
         }
-        .json-data {
-            background-color: #f8f9fa;
-            border: 1px solid #e0e0e0;
-            border-radius: 4px;
-            padding: 15px;
-            margin-top: 20px;
-            font-family: 'Courier New', monospace;
-            font-size: 0.8em;
-            white-space: pre-wrap;
-            overflow-x: auto;
-        }
-        .stats {
-            background-color: #e3f2fd;
+        .request-fields, .response-fields {
+            background: #404040;
             padding: 15px;
             border-radius: 6px;
-            margin-bottom: 20px;
+            border-left: 4px solid #27ae60;
         }
-        .stats h3 {
-            margin: 0 0 10px 0;
-            color: #1976d2;
+        .field-list {
+            font-family: 'Courier New', monospace;
         }
-        .stats p {
-            margin: 5px 0;
-            color: #333;
+        .field {
+            margin-bottom: 8px;
+            padding: 5px 0;
+        }
+        .field:last-child {
+            margin-bottom: 0;
+        }
+        .field code {
+            background: #2c3e50;
+            padding: 2px 6px;
+            border-radius: 3px;
+            color: #ecf0f1;
+        }
+        .json-data {
+            background: #2d2d2d;
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 30px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            border: 1px solid #404040;
+        }
+        .json-data strong {
+            color: #ecf0f1;
+            font-size: 1.2em;
+            margin-bottom: 15px;
+            display: block;
+        }
+        pre {
+            background: #1a1a1a;
+            padding: 15px;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            line-height: 1.4;
+            border: 1px solid #404040;
+            color: #ecf0f1;
+        }
+        code {
+            color: #f39c12;
         }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🔍 Spring Boot Controller API 문서</h1>
-            <p>AST 분석을 통한 자동 생성된 API 문서</p>
+            <h1>🚀 API Documentation</h1>
+            <p>Spring Boot Controller 분석 결과</p>
         </div>
         
-        <div class="content">
-            <div class="stats">
-                <h3>📊 분석 통계</h3>
-                <p><strong>총 모듈 수:</strong> ${controllers.groupBy { it.module }.size}</p>
-                <p><strong>총 Controller 수:</strong> ${controllers.size}</p>
-                <p><strong>총 Endpoint 수:</strong> ${controllers.sumOf { it.endpoints.size }}</p>
-            </div>
-            
-            ${controllers.groupBy { it.module }.map { (module, moduleControllers) ->
-                """
-                <div class="module">
-                    <div class="module-header">
-                        <h2>📦 $module 모듈</h2>
-                        <div class="class-info">
-                            ${moduleControllers.joinToString("<br>") { "📄 ${it.fileName} → ${it.className}" }}
-                        </div>
-                    </div>
-                    <div class="endpoints">
-                        ${moduleControllers.flatMap { it.endpoints }.joinToString("\n") { endpoint ->
-                            """
-                            <div class="endpoint">
-                                <div class="endpoint-header">
-                                    <span class="method ${endpoint.method.lowercase()}">${endpoint.method}</span>
-                                    <span class="path">${endpoint.path}</span>
-                                    <span class="function-name">${endpoint.functionName}</span>
-                                </div>
-                                <div class="details">
-                                    ${if (endpoint.requestDetails.parameters.isNotEmpty()) {
+        ${controllers.joinToString("\n") { controller ->
+            """
+            <div class="controller">
+                <div class="controller-header">
+                    <h2>${controller.className}</h2>
+                    <div class="module">📦 Module: ${controller.module} | 📄 File: ${controller.fileName}</div>
+                </div>
+                <div class="endpoints">
+                    ${controller.endpoints.joinToString("\n") { endpoint ->
+                        """
+                        <div class="endpoint">
+                            <div class="endpoint-header">
+                                <span class="method ${endpoint.method.lowercase()}">${endpoint.method}</span>
+                                <span class="path">${endpoint.path}</span>
+                            </div>
+                            <div class="details">
+                                ${if (endpoint.requestDetails.pathVariables.isNotEmpty()) "<div class='detail-item'><span class='detail-label'>🔗 Path Variables:</span> <code>${endpoint.requestDetails.pathVariables.joinToString(", ")}</code></div>" else ""}
+                                ${if (endpoint.requestDetails.bodyType != null) {
+                                    val requestFields = analyzeDtoFields(endpoint.requestDetails.bodyType)
+                                    if (requestFields.isNotEmpty()) {
                                         """
                                         <div class='detail-item'>
-                                            <span class='detail-label'>📥 Request Parameters:</span>
-                                            <div class='parameter-list'>
-                                                ${endpoint.requestDetails.parameters.joinToString("<br>") { param ->
-                                                    val annotation = if (param.annotation != null) "<span class='annotation'>${param.annotation}</span> " else ""
-                                                    "<div class='parameter'><code>$annotation${param.type} ${param.name}</code></div>"
-                                                }}
+                                            <span class='detail-label'>📦 Request Model:</span>
+                                            <div class='request-fields'>
+                                                <div class='field-list'>
+                                                    <div class='field'><code>{</code></div>
+                                                    ${requestFields.mapIndexed { index, field ->
+                                                        val nullableMark = if (field.nullable) "?" else ""
+                                                        val comma = if (index < requestFields.size - 1) "," else ""
+                                                        "<div class='field'><code>&nbsp;&nbsp;\"${field.name}\": ${field.type}$nullableMark$comma</code></div>"
+                                                    }.joinToString("<br>")}
+                                                    <div class='field'><code>}</code></div>
+                                                </div>
                                             </div>
                                         </div>
                                         """
-                                    } else ""}
-                                    ${if (endpoint.requestDetails.bodyType != null) "<div class='detail-item'><span class='detail-label'>📦 Request Body:</span> <code>${endpoint.requestDetails.bodyType}</code></div>" else ""}
-                                    ${if (endpoint.requestDetails.pathVariables.isNotEmpty()) "<div class='detail-item'><span class='detail-label'>🔗 Path Variables:</span> <code>${endpoint.requestDetails.pathVariables.joinToString(", ")}</code></div>" else ""}
-                                    ${if (endpoint.responseDetails.type.isNotEmpty()) {
-                                        val responseInfo = if (endpoint.responseDetails.isList) {
-                                            "List<${endpoint.responseDetails.genericType ?: "Unknown"}>"
-                                        } else {
-                                            endpoint.responseDetails.type
-                                        }
-                                        "<div class='detail-item'><span class='detail-label'>📤 Response:</span> <code>$responseInfo</code></div>"
-                                    } else ""}
-                                    ${if (endpoint.functionName.isNotEmpty()) "<div class='detail-item'><span class='detail-label'>🔧 Function:</span> <code>${endpoint.functionName}</code></div>" else ""}
-                                </div>
+                                    } else ""
+                                } else ""}
+                                ${if (endpoint.responseDetails.fields.isNotEmpty()) {
+                                    """
+                                    <div class='detail-item'>
+                                        <span class='detail-label'>📤 Response Model:</span>
+                                        <div class='response-fields'>
+                                            <div class='field-list'>
+                                                <div class='field'><code>{</code></div>
+                                                ${endpoint.responseDetails.fields.mapIndexed { index, field ->
+                                                    val nullableMark = if (field.nullable) "?" else ""
+                                                    val comma = if (index < endpoint.responseDetails.fields.size - 1) "," else ""
+                                                    "<div class='field'><code>&nbsp;&nbsp;\"${field.name}\": ${field.type}$nullableMark$comma</code></div>"
+                                                }.joinToString("<br>")}
+                                                <div class='field'><code>}</code></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    """
+                                } else ""}
                             </div>
-                            """
-                        }}
-                    </div>
+                        </div>
+                        """
+                    }}
                 </div>
-                """
-            }.joinToString("\n")}
-            
-            <div class="json-data">
-                <strong>📄 JSON 데이터:</strong>
-                $json
             </div>
+            """
+        }}
+        
+        <div class="json-data">
+            <strong>📄 JSON 데이터:</strong>
+            <pre>$json</pre>
         </div>
     </div>
 </body>
@@ -638,7 +935,6 @@ data class ControllerInfo(
 data class EndpointInfo(
     val method: String,
     val path: String,
-    val functionName: String,
     val requestType: String,
     val responseType: String,
     val requestDetails: RequestDetails,
@@ -654,7 +950,15 @@ data class RequestDetails(
 data class ResponseDetails(
     val type: String,
     val isList: Boolean,
-    val genericType: String?
+    val genericType: String?,
+    val fields: List<FieldInfo>
+)
+
+data class FieldInfo(
+    val name: String,
+    val type: String,
+    val nullable: Boolean,
+    val description: String?
 )
 
 data class ParameterInfo(
