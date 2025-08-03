@@ -1,4 +1,4 @@
-package com.example.inker
+package com.example.inker.application
 
 import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.boot.runApplication
@@ -8,4 +8,4 @@ class InkerApplication
 
 fun main(args: Array<String>) {
     runApplication<InkerApplication>(*args)
-}
+} 
