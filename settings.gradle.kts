@@ -7,4 +7,5 @@ rootProject.name = "inker"
 include("user")
 include("booking")
 include("application")
+include("stock")
 
